@@ -17,6 +17,18 @@ option(USE_STATIC_MOLTENVK "link moltenvk static library" OFF)
 find_package(Threads)
 find_package(OpenMP)
 find_package(Vulkan REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+
+# Find pybind11
+# Automatically locate pybind11 if installed via pip
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" -m pybind11 --cmakedir
+    OUTPUT_VARIABLE _tmp_dir
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+set(pybind11_DIR ${_tmp_dir})
+
+find_package(pybind11 REQUIRED)
 
 macro(rife_add_shader SHADER_SRC)
     get_filename_component(SHADER_SRC_NAME_WE ${SHADER_SRC} NAME_WE)
@@ -39,7 +51,7 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 if(OPENMP_FOUND)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${OpenMP_SHARED_LINKER_FLAGS}")
 endif()
 
 # enable global link time optimization
@@ -258,15 +270,19 @@ rife_add_shader(warp_pack8.comp)
 
 add_custom_target(generate-spirv DEPENDS ${SHADER_SPV_HEX_FILES})
 
-add_executable(rife-ncnn-vulkan
+add_library(_rife_ncnn_vulkan SHARED
     main.cpp
     rife.cpp
     warp.cpp
+    bindings.cpp  # Add bindings.cpp to the library
 )
 
-add_dependencies(rife-ncnn-vulkan generate-spirv)
+add_dependencies(_rife_ncnn_vulkan generate-spirv)
 
-set(RIFE_LINK_LIBRARIES ncnn webp ${Vulkan_LIBRARY})
+# Ensure the output file is named correctly for a Python extension module
+set_target_properties(_rife_ncnn_vulkan PROPERTIES PREFIX "" SUFFIX ".pyd")
+
+set(RIFE_LINK_LIBRARIES ncnn webp ${Vulkan_LIBRARY} Python3::Python)
 
 if(USE_STATIC_MOLTENVK)
     find_library(CoreFoundation NAMES CoreFoundation)
@@ -290,4 +306,9 @@ if(USE_STATIC_MOLTENVK)
     )
 endif()
 
-target_link_libraries(rife-ncnn-vulkan ${RIFE_LINK_LIBRARIES})
+
+# Link libraries with PRIVATE visibility since they are implementation details
+target_link_libraries(_rife_ncnn_vulkan PRIVATE ${RIFE_LINK_LIBRARIES})
+
+# pybind11 might be PUBLIC if you want downstream targets to have access to pybind11 functionalities.
+target_link_libraries(_rife_ncnn_vulkan PUBLIC pybind11::module)
